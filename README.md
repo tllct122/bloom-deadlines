@@ -15,7 +15,7 @@ Bloom is a small Chrome extension for students on **Blackboard Learn (Ultra)** o
 - 🔴 **Countdown & colors**: "in 5h" in orange and overdue in red, so the urgent ones stand out
 - 🔢 **Toolbar badge**: the extension icon shows how many deadlines are due within 24 hours (or 3 days)
 - 📅 **Add to your calendar**: one click downloads a calendar file with a reminder the day before (Apple Calendar, Google Calendar, Outlook)
-- ✅ **Send to EdgeTodo**: deadlines go straight into EdgeTodo's screen-edge to-do list with their due dates
+- ✅ **Syncs with EdgeTodo (Mac)**: deadlines appear in [EdgeTodo](https://github.com/tllct122/edge-todo-for-mac)'s screen-edge to-do list by themselves, and get ticked off when you submit
 - ☑️ **Mark done**: tick off things the site can't track, like offline tasks
 - 🔒 **Private**: runs only on the one site you connect, uses the session you're already signed in with, and keeps everything in your browser. No servers, no tracking
 
@@ -58,13 +58,13 @@ Works in Chrome, Edge, Arc, Brave and other Chromium browsers. Bloom detects Bla
 | Tick something off yourself | Hover a deadline → **Mark done** |
 | Hide finished work | **Hide finished** at the bottom of the panel |
 | Add to your calendar | **📅 Calendar**, then open the downloaded `.ics` file |
-| Send to EdgeTodo | **→ EdgeTodo**: EdgeTodo imports it if **Settings → Import** is on, or use its menu → **Import Tasks…** |
+| Sync with EdgeTodo | Settings → **Sync with EdgeTodo automatically** (keep EdgeTodo open). Without it, **→ EdgeTodo** saves a file EdgeTodo can import |
 | Change the theme | Extension icon → ⚙︎ → **Your theme** |
 | Share a theme | **Export theme** → send the file → your friend clicks **Import theme** |
 
 ## Privacy
 
-Bloom only runs on the one address you connect. It reads your deadlines and submission status through Blackboard's or Canvas's own web API with your existing login, which is the same data you already see on the site. It never sees your password, and nothing is sent to anyone else. Your settings, theme and deadline list are stored in your browser only.
+Bloom only runs on the one address you connect (and, if you turn on EdgeTodo sync, talks to EdgeTodo on your own Mac). It reads your deadlines and submission status through Blackboard's or Canvas's own web API with your existing login, which is the same data you already see on the site. It never sees your password, and nothing is sent to anyone else. Your settings, theme and deadline list are stored in your browser only.
 
 ## Support
 

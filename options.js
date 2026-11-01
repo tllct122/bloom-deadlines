@@ -1,6 +1,6 @@
 /* global BLOOM_THEME_DEFAULTS, BLOOM_PRESETS, BLOOM_FONTS, bloomFontStack, bloomFontFaces, bloomTheme, bloomRGBA, bloomIsLight */
 
-const DEFAULTS = { days: 14, hideSubmitted: false, widget: true, side: 'right', host: '', platform: 'auto' };
+const DEFAULTS = { days: 14, hideSubmitted: false, widget: true, side: 'right', host: '', platform: 'auto', edgetodoSync: false };
 const COLOR_FIELDS = [
   ['sidebar', 'Side menu & top bar'],
   ['accent', 'Buttons & links'],
@@ -207,6 +207,28 @@ $('#side').onchange = (e) => { settings.side = e.target.value; saveSettings(); }
 $('#days').onchange = (e) => { settings.days = +e.target.value; saveSettings(); };
 $('#platform').onchange = (e) => { settings.platform = e.target.value; saveSettings(); };
 
+/* ---------------- EdgeTodo ---------------- */
+function edgeStatus(text, ok) { const el = $('#edgetodoStatus'); el.textContent = text; el.className = 'status ' + (ok ? 'ok' : 'warn'); }
+
+async function checkEdgeTodo() {
+  if (!settings.edgetodoSync) { edgeStatus('', true); return; }
+  const r = await chrome.runtime.sendMessage({ type: 'bloom:edgetodo-ping' }).catch(() => null);
+  if (!r || !r.ok) { edgeStatus("EdgeTodo isn't open right now — Bloom will send your deadlines when it is.", false); return; }
+  const s = await chrome.runtime.sendMessage({ type: 'bloom:edgetodo-sync' }).catch(() => null);
+  edgeStatus(s && s.ok ? `Connected to EdgeTodo ✓${s.added ? ` — ${s.added} deadline${s.added === 1 ? '' : 's'} added` : ''}` : 'Connected to EdgeTodo ✓', true);
+}
+
+$('#edgetodoSync').onchange = async (e) => {
+  if (e.target.checked) {
+    // Must run straight from the click so Chrome shows its permission prompt.
+    const granted = await chrome.permissions.request({ origins: ['http://127.0.0.1/*'] });
+    if (!granted) { e.target.checked = false; edgeStatus('Bloom needs that permission to reach EdgeTodo on your Mac.', false); return; }
+  }
+  settings.edgetodoSync = e.target.checked;
+  await saveSettings();
+  checkEdgeTodo();
+};
+
 $('#connect').onclick = async () => {
   let origin;
   try {
@@ -234,10 +256,11 @@ async function load() {
   settings = { ...DEFAULTS, ...(saved.settings || {}) };
   theme = bloomTheme(saved);
   $('#host').value = settings.host;
-  for (const k of ['widget', 'hideSubmitted']) $('#' + k).checked = !!settings[k];
+  for (const k of ['widget', 'hideSubmitted', 'edgetodoSync']) $('#' + k).checked = !!settings[k];
   for (const k of ['side', 'days', 'platform']) $('#' + k).value = String(settings[k]);
   buildPresets(); buildColors(); buildFonts();
   fill();
+  checkEdgeTodo();
   if (settings.host) {
     const ok = await chrome.permissions.contains({ origins: [settings.host + '/*'] });
     status(ok ? `Connected to ${settings.host} ✓` : 'Click Connect to allow Bloom on this site.', ok);

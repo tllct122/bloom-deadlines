@@ -9,7 +9,7 @@
   window.__bloomLoaded = true;
 
   const ORIGIN = location.origin;
-  const DEFAULTS = { days: 14, hideSubmitted: false, widget: true, side: 'right', platform: 'auto' };
+  const DEFAULTS = { days: 14, hideSubmitted: false, widget: true, side: 'right', platform: 'auto', edgetodoSync: false };
   const DAY = 86400000;
 
   /* ---------------- storage ---------------- */
@@ -536,7 +536,7 @@
       html += `<div class="foot">
           <label class="toggle"><input type="checkbox" data-act="hide" ${settings.hideSubmitted ? 'checked' : ''}> Hide finished</label>
           <button class="btn" data-act="ics" title="Add to Apple / Google Calendar">📅 Calendar</button>
-          <button class="btn main" data-act="edgetodo" title="Send to EdgeTodo">→ EdgeTodo</button>
+          <button class="btn main" data-act="edgetodo" title="Send to EdgeTodo">${settings.edgetodoSync ? '↻ EdgeTodo' : '→ EdgeTodo'}</button>
         </div>
         <div class="small">${note ? `<b style="color:#30A46C">${esc(note)}</b>` : `Bloom · not affiliated with ${lms}`}</div>
       </div>`;
@@ -570,6 +570,10 @@
       flashNote('Saved — open the downloaded file to add it to your calendar.');
     }
     if (act === 'edgetodo') {
+      if (settings.edgetodoSync) {
+        const r = await chrome.runtime.sendMessage({ type: 'bloom:edgetodo-sync' }).catch(() => null);
+        if (r && r.ok) { flashNote(`Synced with EdgeTodo ✓${r.added ? ` — ${r.added} new` : ''}`); return; }
+      }
       download('edgetodo-import.json', toEdgeTodo(items.filter((i) => !isDone(i))), 'application/json');
       flashNote('Saved to Downloads — EdgeTodo picks it up if Settings → Import is on, or use its menu → Import Tasks…');
     }

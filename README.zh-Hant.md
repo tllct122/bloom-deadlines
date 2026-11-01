@@ -15,7 +15,7 @@ Bloom 是給使用 **Blackboard Learn（Ultra）** 或 **Canvas** 的學生用�
 - 🔴 **倒數與顏色**：「in 5h」顯示為橙色，逾期顯示為紅色，緊急的一眼就看到
 - 🔢 **工具列數字**：擴充圖示會顯示 24 小時（或 3 天）內到期的數量
 - 📅 **加入日曆**：一鍵下載日曆檔，附前一天提醒（Apple 日曆、Google 日曆、Outlook）
-- ✅ **傳送到 EdgeTodo**：截止日期直接加入 EdgeTodo 的螢幕邊待辦清單
+- ✅ **與 EdgeTodo 同步（Mac）**：截止日期會自動出現在 [EdgeTodo](https://github.com/tllct122/edge-todo-for-mac) 的螢幕邊待辦清單，提交後會自動剔走
 - ☑️ **手動標記完成**：網站追蹤不到的事（例如實體功課）可以自己剔走
 - 🔒 **私隱**：只在你連接的那個網站運作，使用你已登入的帳戶，所有資料只存在你的瀏覽器。沒有伺服器，不會追蹤
 
@@ -58,7 +58,7 @@ Bloom 是給使用 **Blackboard Learn（Ultra）** 或 **Canvas** 的學生用�
 | 自己標記完成 | 滑鼠移到項目上 → **Mark done** |
 | 隱藏已完成 | 面板底部的 **Hide finished** |
 | 加入日曆 | **📅 Calendar**，然後打開下載的 `.ics` 檔 |
-| 傳送到 EdgeTodo | **→ EdgeTodo**：如 EdgeTodo 已開啟 **Settings → Import** 就會自動匯入，或用它的選單 → **Import Tasks…** |
+| 與 EdgeTodo 同步 | 設定 → **Sync with EdgeTodo automatically**（保持 EdgeTodo 開啟）。沒有開啟的話，**→ EdgeTodo** 會儲存一個 EdgeTodo 可以匯入的檔案 |
 | 更改主題 | 擴充圖示 → ⚙︎ → **Your theme** |
 | 分享主題 | **Export theme** → 把檔案傳給朋友 → 朋友按 **Import theme** |
 

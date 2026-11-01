@@ -43,7 +43,57 @@ async function updateBadge() {
   await chrome.action.setBadgeBackgroundColor({ color: urgent ? '#E5484D' : '#E2A400' });
 }
 
+/* ---------- EdgeTodo sync (Mac app, github.com/tllct122/edge-todo-for-mac) ----------
+   EdgeTodo listens on this Mac only (127.0.0.1). Bloom sends your deadlines there whenever they
+   change, including the ones you've submitted, so EdgeTodo can tick them off too. */
+const EDGETODO = 'http://127.0.0.1:47621/edgetodo';
+const EDGETODO_ORIGIN = 'http://127.0.0.1/*';
+
+function edgeTodoList(cache, done) {
+  const pad = (n) => String(n).padStart(2, '0');
+  const local = (iso) => { const d = new Date(iso); return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`; };
+  const prefix = cache.platform === 'canvas' ? 'cv' : 'bb';
+  const now = Date.now();
+  return (cache.items || [])
+    .filter((it) => new Date(it.due).getTime() > now - 7 * DAY)
+    .map((it) => ({ id: `${prefix}:${it.id}`, title: it.title, category: String(it.code || 'school').toLowerCase(),
+      due: local(it.due), status: it.submitted === true || done[it.id] ? 'completed' : 'todo' }));
+}
+
+async function syncEdgeTodo(force) {
+  const { settings = {}, cache, done = {} } = await chrome.storage.local.get(['settings', 'cache', 'done']);
+  if (!force && !settings.edgetodoSync) return { ok: false, reason: 'off' };
+  if (!cache || !(cache.items || []).length) return { ok: true, added: 0, updated: 0, finished: 0 };
+  if (!(await chrome.permissions.contains({ origins: [EDGETODO_ORIGIN] }))) return { ok: false, reason: 'permission' };
+  let result;
+  try {
+    const r = await fetch(`${EDGETODO}/sync`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'X-EdgeTodo': '1' },
+      body: JSON.stringify({ todos: edgeTodoList(cache, done) }),
+    });
+    result = r.ok ? { ok: true, ...(await r.json()) } : { ok: false, reason: `HTTP ${r.status}` };
+  } catch (e) {
+    result = { ok: false, reason: 'offline' };   // EdgeTodo isn't open
+  }
+  await chrome.storage.local.set({ edgetodoStatus: { ...result, at: Date.now() } });
+  return result;
+}
+
+let syncTimer;
+function syncSoon() { clearTimeout(syncTimer); syncTimer = setTimeout(() => syncEdgeTodo(false), 1500); }
+
 chrome.runtime.onMessage.addListener((msg, _sender, reply) => {
+  if (msg && msg.type === 'bloom:edgetodo-sync') {
+    syncEdgeTodo(true).then(reply);
+    return true;
+  }
+  if (msg && msg.type === 'bloom:edgetodo-ping') {
+    fetch(`${EDGETODO}/ping`, { headers: { 'X-EdgeTodo': '1' } })
+      .then((r) => r.json()).then((j) => reply({ ok: !!(j && j.ok) }))
+      .catch(() => reply({ ok: false }));
+    return true;
+  }
   if (msg && msg.type === 'bloom:register') {
     ensureRegistered()
       .then(async (ok) => { if (ok) await injectIntoOpenTabs(msg.host); reply({ ok }); })
@@ -69,6 +119,10 @@ chrome.runtime.onInstalled.addListener(async (details) => {
   if (details.reason === 'install') chrome.runtime.openOptionsPage();
 });
 chrome.runtime.onStartup.addListener(() => { ensureRegistered(); updateBadge(); });
-chrome.alarms.onAlarm.addListener(updateBadge);
-chrome.storage.onChanged.addListener((changes) => { if (changes.cache || changes.done) updateBadge(); });
+chrome.alarms.onAlarm.addListener(() => { updateBadge(); syncEdgeTodo(false); });
+chrome.storage.onChanged.addListener((changes) => {
+  if (changes.cache || changes.done) { updateBadge(); syncSoon(); }
+  if (changes.settings && changes.settings.newValue && changes.settings.newValue.edgetodoSync &&
+      !(changes.settings.oldValue && changes.settings.oldValue.edgetodoSync)) syncSoon();
+});
 chrome.permissions.onRemoved.addListener(() => ensureRegistered());
