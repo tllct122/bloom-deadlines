@@ -1,0 +1,66 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Bloom for Blackboard — Settings</title>
+<link rel="stylesheet" href="ui.css">
+</head>
+<body class="page">
+  <main class="settings">
+    <header class="hero">
+      <div class="logo">✿</div>
+      <div>
+        <h1>Bloom for Blackboard</h1>
+        <p>Every deadline at a glance, and Blackboard in your colors.</p>
+      </div>
+    </header>
+
+    <section class="card">
+      <h2>1 · Your Blackboard</h2>
+      <p class="hint">Open Blackboard and copy the address from the top of the window — just the start, e.g. <code>https://learn.yourschool.edu</code>.</p>
+      <div class="row">
+        <input id="host" type="url" placeholder="https://learn.yourschool.edu" spellcheck="false">
+        <button id="connect" class="btn main">Connect</button>
+      </div>
+      <p id="status" class="status"></p>
+      <p class="hint small">Chrome will ask to let Bloom work on that one site. Bloom reads your deadlines with the Blackboard session you're already signed in to. Nothing is sent anywhere else.</p>
+    </section>
+
+    <section class="card">
+      <h2>2 · Deadlines panel</h2>
+      <label class="check"><input type="checkbox" id="widget"> Show the ✿ deadlines button on Blackboard pages</label>
+      <div class="row wrap">
+        <label class="field">Corner
+          <select id="side"><option value="right">Bottom right</option><option value="left">Bottom left</option></select></label>
+        <label class="field">Look ahead
+          <select id="days"><option value="7">7 days</option><option value="14">14 days</option><option value="30">30 days</option><option value="60">60 days</option></select></label>
+      </div>
+      <label class="check"><input type="checkbox" id="hideSubmitted"> Hide things I've already submitted</label>
+    </section>
+
+    <section class="card">
+      <h2>3 · Blackboard look</h2>
+      <label class="check"><input type="checkbox" id="theme"> Restyle Blackboard</label>
+      <div class="field">Color
+        <div class="swatches" id="swatches"></div>
+      </div>
+      <label class="field">Font
+        <select id="font">
+          <option value="default">Blackboard default</option>
+          <option value="rounded">Rounded</option>
+          <option value="clean">Clean</option>
+          <option value="serif">Serif</option>
+          <option value="mono">Monospaced</option>
+        </select></label>
+      <label class="check"><input type="checkbox" id="dark"> Dark mode</label>
+    </section>
+
+    <footer class="foot">
+      Free & open source · <a href="https://github.com/tllct122/bloom-for-blackboard" target="_blank">GitHub</a> ·
+      <a href="https://buymeacoffee.com/sirene122" target="_blank">☕ Buy me a coffee</a><br>
+      Not affiliated with or endorsed by Blackboard / Anthology.
+    </footer>
+  </main>
+  <script src="options.js"></script>
+</body>
+</html>
