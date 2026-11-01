@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
 <meta charset="utf-8">
-<title>Bloom for Blackboard — Settings</title>
+<title>Bloom — Settings</title>
 <link rel="stylesheet" href="ui.css">
 </head>
 <body class="page">
@@ -10,25 +10,31 @@
     <header class="hero">
       <div class="logo">✿</div>
       <div>
-        <h1>Bloom for Blackboard</h1>
-        <p>Every deadline at a glance, and Blackboard in your colors.</p>
+        <h1>Bloom</h1>
+        <p>Every deadline at a glance, and Blackboard or Canvas in your own style.</p>
       </div>
     </header>
 
     <section class="card">
-      <h2>1 · Your Blackboard</h2>
-      <p class="hint">Open Blackboard and copy the address from the top of the window — just the start, e.g. <code>https://learn.yourschool.edu</code>.</p>
+      <h2>1 · Your school site</h2>
+      <p class="hint">Open Blackboard or Canvas and copy the address from the top of the window — just the start, e.g. <code>https://learn.yourschool.edu</code> or <code>https://yourschool.instructure.com</code>.</p>
       <div class="row">
         <input id="host" type="url" placeholder="https://learn.yourschool.edu" spellcheck="false">
         <button id="connect" class="btn main">Connect</button>
       </div>
       <p id="status" class="status"></p>
-      <p class="hint small">Chrome will ask to let Bloom work on that one site. Bloom reads your deadlines with the Blackboard session you're already signed in to. Nothing is sent anywhere else.</p>
+      <label class="field inline">This site is
+        <select id="platform">
+          <option value="auto">Detect automatically</option>
+          <option value="blackboard">Blackboard Learn (Ultra)</option>
+          <option value="canvas">Canvas</option>
+        </select></label>
+      <p class="hint small">Chrome will ask to let Bloom work on that one site. Bloom reads your deadlines with the session you're already signed in to. Nothing is sent anywhere else.</p>
     </section>
 
     <section class="card">
       <h2>2 · Deadlines panel</h2>
-      <label class="check"><input type="checkbox" id="widget"> Show the ✿ deadlines button on Blackboard pages</label>
+      <label class="check"><input type="checkbox" id="widget"> Show the ✿ deadlines button on the site</label>
       <div class="row wrap">
         <label class="field">Corner
           <select id="side"><option value="right">Bottom right</option><option value="left">Bottom left</option></select></label>
@@ -38,29 +44,90 @@
       <label class="check"><input type="checkbox" id="hideSubmitted"> Hide things I've already submitted</label>
     </section>
 
-    <section class="card">
-      <h2>3 · Blackboard look</h2>
-      <label class="check"><input type="checkbox" id="theme"> Restyle Blackboard</label>
-      <div class="field">Color
-        <div class="swatches" id="swatches"></div>
+    <section class="card theme-card">
+      <div class="theme-head">
+        <h2>3 · Your theme</h2>
+        <label class="switch"><input type="checkbox" id="t-enabled"><span></span> Restyle the site</label>
       </div>
-      <label class="field">Font
-        <select id="font">
-          <option value="default">Blackboard default</option>
-          <option value="rounded">Rounded</option>
-          <option value="clean">Clean</option>
-          <option value="serif">Serif</option>
-          <option value="mono">Monospaced</option>
-        </select></label>
-      <label class="check"><input type="checkbox" id="dark"> Dark mode</label>
+
+      <div class="theme-grid">
+        <div class="controls">
+          <div class="group-label">Start from a preset</div>
+          <div class="presets" id="presets"></div>
+
+          <div class="group-label">Colors <span class="muted">— click a color to change it, ⌀ to keep the school's own</span></div>
+          <div class="colors" id="colors"></div>
+
+          <div class="group-label">Text</div>
+          <label class="field">Font
+            <select id="t-font"></select></label>
+          <div id="font-custom" class="sub" hidden>
+            <input id="t-customFont" type="text" placeholder="Font name, e.g. Comic Sans MS" spellcheck="false">
+            <p class="hint small">Type the name of any font installed on your computer.</p>
+          </div>
+          <div id="font-upload" class="sub" hidden>
+            <label class="btn small file">Choose font file…<input id="fontFile" type="file" accept=".ttf,.otf,.woff,.woff2"></label>
+            <span id="fontName" class="muted"></span>
+          </div>
+          <label class="field">Text size <b id="v-size"></b>
+            <input id="t-size" type="range" min="80" max="140" step="5"></label>
+
+          <div class="group-label">Shape</div>
+          <label class="field">Card corners <b id="v-radius"></b>
+            <input id="t-radius" type="range" min="0" max="32" step="2"></label>
+
+          <div class="group-label">Background picture</div>
+          <div class="row">
+            <label class="btn small file">Choose picture…<input id="imageFile" type="file" accept="image/*"></label>
+            <button class="btn small" id="imageRemove" hidden>Remove</button>
+          </div>
+          <label class="field" id="strength-field" hidden>How much it shows <b id="v-imageStrength"></b>
+            <input id="t-imageStrength" type="range" min="0.05" max="1" step="0.05"></label>
+
+          <div class="group-label">Extras</div>
+          <label class="check"><input type="checkbox" id="t-dark"> Dark mode</label>
+          <details class="adv">
+            <summary>Your own CSS</summary>
+            <textarea id="t-css" rows="6" spellcheck="false" placeholder="/* added last, on top of everything */&#10;.element-card { box-shadow: 0 4px 0 #0002; }"></textarea>
+          </details>
+
+          <div class="row wrap actions">
+            <button class="btn small" id="export">Export theme</button>
+            <label class="btn small file">Import theme<input id="importFile" type="file" accept=".json,application/json"></label>
+            <button class="btn small" id="reset">Reset</button>
+          </div>
+          <p id="themeNote" class="status"></p>
+        </div>
+
+        <div class="preview-wrap">
+          <div class="group-label">Preview <span class="muted">— open tabs update live too</span></div>
+          <div class="preview" id="preview">
+            <div class="pv-side">
+              <div class="pv-logo">✿</div>
+              <div class="pv-nav on">Courses</div><div class="pv-nav">Calendar</div><div class="pv-nav">Grades</div><div class="pv-nav">Messages</div>
+            </div>
+            <div class="pv-main">
+              <div class="pv-zoom">
+                <div class="pv-h1">Courses</div>
+                <div class="pv-cards">
+                  <div class="pv-card"><div class="pv-band"></div><div class="pv-ct">SEHS2306</div><div class="pv-cs">Introduction to Probability</div></div>
+                  <div class="pv-card"><div class="pv-band b2"></div><div class="pv-ct">SEHS2376</div><div class="pv-cs">Data Science with Programming</div></div>
+                </div>
+                <div class="pv-row"><span class="pv-link">View all assignments</span><span class="pv-btn">Submit</span></div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
     </section>
 
     <footer class="foot">
-      Free & open source · <a href="https://github.com/tllct122/bloom-for-blackboard" target="_blank">GitHub</a> ·
+      Free & open source · <a href="https://github.com/tllct122/bloom-deadlines" target="_blank">GitHub</a> ·
       <a href="https://buymeacoffee.com/sirene122" target="_blank">☕ Buy me a coffee</a><br>
-      Not affiliated with or endorsed by Blackboard / Anthology.
+      Not affiliated with or endorsed by Blackboard / Anthology or Instructure (Canvas).
     </footer>
   </main>
+  <script src="presets.js"></script>
   <script src="options.js"></script>
 </body>
 </html>

@@ -1,8 +1,11 @@
-// Bloom for Blackboard — background worker.
-// Runs the page script on *your* Blackboard site only (the address you enter in Settings),
+// Bloom — background worker.
+// Runs the page script on *your* school's Blackboard or Canvas site only (the address you enter in Settings),
 // and keeps the toolbar badge showing how many deadlines are close.
 
+importScripts('presets.js');  /* global bloomTheme */
+
 const SCRIPT_ID = 'bloom';
+const FILES = ['presets.js', 'content.js'];
 const DAY = 86400000;
 
 async function ensureRegistered() {
@@ -16,16 +19,16 @@ async function ensureRegistered() {
   if (existing.length && existing[0].matches[0] === host + '/*') return true;
   if (existing.length) await chrome.scripting.unregisterContentScripts({ ids: [SCRIPT_ID] });
   await chrome.scripting.registerContentScripts([
-    { id: SCRIPT_ID, matches: [host + '/*'], js: ['content.js'], runAt: 'document_idle' },
+    { id: SCRIPT_ID, matches: [host + '/*'], js: FILES, runAt: 'document_idle' },
   ]);
   return true;
 }
 
-/** Start working in Blackboard tabs that are already open (no reload needed). */
+/** Start working in tabs that are already open (no reload needed). */
 async function injectIntoOpenTabs(host) {
   const tabs = await chrome.tabs.query({ url: host + '/*' });
   for (const t of tabs) {
-    try { await chrome.scripting.executeScript({ target: { tabId: t.id }, files: ['content.js'] }); } catch (e) { /* tab not ready */ }
+    try { await chrome.scripting.executeScript({ target: { tabId: t.id }, files: FILES }); } catch (e) { /* tab not ready */ }
   }
 }
 
@@ -49,7 +52,17 @@ chrome.runtime.onMessage.addListener((msg, _sender, reply) => {
   }
 });
 
-chrome.runtime.onInstalled.addListener((details) => {
+/** Version 1 kept the colors inside `settings`; move them to the new `theme`. */
+async function migrate() {
+  const saved = await chrome.storage.local.get(['settings', 'theme']);
+  if (!saved.theme) await chrome.storage.local.set({ theme: bloomTheme(saved) });
+}
+
+chrome.runtime.onInstalled.addListener(async (details) => {
+  await migrate();
+  // re-register so the new file list is used after an update
+  const old = await chrome.scripting.getRegisteredContentScripts({ ids: [SCRIPT_ID] });
+  if (old.length && old[0].js.join() !== FILES.join()) await chrome.scripting.unregisterContentScripts({ ids: [SCRIPT_ID] });
   ensureRegistered();
   updateBadge();
   chrome.alarms.create('badge', { periodInMinutes: 15 });

@@ -1,16 +1,15 @@
-// Bloom for Blackboard — runs on your Blackboard Learn (Ultra) site.
-// Shows your upcoming deadlines in a small floating panel, and restyles Blackboard to your taste.
-// Everything is read from your own Blackboard session and kept in your browser. Nothing is sent anywhere else.
+// Bloom — runs on your school's Blackboard Learn (Ultra) or Canvas site.
+// Shows your upcoming deadlines in a small floating panel, and restyles the site to your taste.
+// Everything is read from your own signed-in session and kept in your browser. Nothing is sent anywhere else.
+
+/* global BLOOM_THEME_DEFAULTS, bloomFontStack, bloomFontFaces, bloomTheme, bloomRGBA, bloomIsLight */
 
 (() => {
   if (window.__bloomLoaded) return;
   window.__bloomLoaded = true;
 
   const ORIGIN = location.origin;
-  const DEFAULTS = {
-    days: 14, hideSubmitted: false, accent: '#FF6FAE', font: 'default', dark: false,
-    theme: true, widget: true, side: 'right',
-  };
+  const DEFAULTS = { days: 14, hideSubmitted: false, widget: true, side: 'right', platform: 'auto' };
   const DAY = 86400000;
 
   /* ---------------- storage ---------------- */
@@ -19,31 +18,26 @@
     set: (obj) => chrome.storage.local.set(obj),
   };
   let settings = { ...DEFAULTS };
+  let theme = { ...BLOOM_THEME_DEFAULTS };
+  let platform = null;    // 'blackboard' | 'canvas'
   let items = [];
   let done = {};          // manually ticked items
   let loading = false;
   let lastError = '';
   let note = '';          // short message under the panel buttons
 
-  /* ---------------- Blackboard API (same session you're logged in with) ---------------- */
-  async function api(path) {
-    const r = await fetch(ORIGIN + path, { credentials: 'include', headers: { Accept: 'application/json' } });
-    if (!r.ok) throw new Error(`HTTP ${r.status}`);
-    return r.json();
-  }
+  /* ---------------- shared helpers ---------------- */
+  const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+  const isDone = (it) => it.submitted === true || !!done[it.id];
+  const titleCase = (s) => s.toLowerCase().replace(/\b\w/g, (c) => c.toUpperCase());
 
-  /** "2026_1_SEHS2306_A01: 2026-1 SEHS2306 INTRO TO …" → code "SEHS2306", name "Intro to …" */
-  function parseCourse(calendarName = '') {
-    let code = (calendarName.match(/\b([A-Z]{2,6}\d{3,5}[A-Z]?)\b/) || [])[1] || '';
-    let name = calendarName.includes(':') ? calendarName.split(':').slice(1).join(':').trim() : calendarName;
-    name = name.replace(/^\d{4}-\d\s+/, '').replace(code, '').replace(/\(.*?\)\s*$/, '').trim();
-    name = name.toLowerCase().replace(/\b\w/g, (c) => c.toUpperCase());
-    if (!code && calendarName.includes(':')) {
-      // course ID like "2026_1_ACI-UD" or "2026_1-UNIT_LC-EEP-AEEW" → "ACI-UD" / "LC-EEP-AEEW"
-      const id = calendarName.split(':')[0].replace(/^\d{4}_\d+[-_]?/, '');
-      code = id.split('_').filter(Boolean).pop() || '';
-    }
-    return { code: (code || name.split(' ').slice(0, 2).join(' ')).slice(0, 14), name };
+  async function getJSON(url) {
+    const r = await fetch(url, { credentials: 'include', headers: { Accept: 'application/json' } });
+    if (!r.ok) throw new Error(`HTTP ${r.status}`);
+    const text = (await r.text()).replace(/^while\(1\);/, '');   // Canvas adds this guard
+    const link = r.headers.get('Link') || '';
+    const next = (link.match(/<([^>]+)>;\s*rel="next"/) || [])[1] || '';
+    return { data: JSON.parse(text), next: next && new URL(next, ORIGIN).origin === ORIGIN ? next : '' };
   }
 
   async function pool(list, n, fn) {
@@ -53,57 +47,207 @@
     }));
   }
 
-  async function fetchDeadlines() {
-    const now = Date.now();
-    const since = new Date(now - 3 * DAY).toISOString();
-    const until = new Date(now + settings.days * DAY).toISOString();
-    let path = `/learn/api/public/v1/calendars/items?since=${since}&until=${until}`;
-    const raw = [];
-    for (let page = 0; path && page < 8; page++) {
-      const data = await api(path);
-      raw.push(...(data.results || []));
-      path = data.paging && data.paging.nextPage;
+  /** "2026_1_SEHS2306_A01: 2026-1 SEHS2306 INTRO TO …" → code "SEHS2306", name "Intro To …" */
+  function parseCourse(full = '') {
+    let code = (full.match(/\b([A-Z]{2,6}\s?\d{3,5}[A-Z]?)\b/) || [])[1] || '';
+    let name = full.includes(':') ? full.split(':').slice(1).join(':').trim() : full;
+    name = name.replace(/^\d{4}-\d\s+/, '').replace(code, '').replace(/\(.*?\)\s*$/, '').trim();
+    if (name === name.toUpperCase()) name = titleCase(name);
+    if (!code && full.includes(':')) {
+      // course ID like "2026_1_ACI-UD" or "2026_1-UNIT_LC-EEP-AEEW" → "ACI-UD" / "LC-EEP-AEEW"
+      const id = full.split(':')[0].replace(/^\d{4}_\d+[-_]?/, '');
+      code = id.split('_').filter(Boolean).pop() || '';
     }
-    const seen = new Set();
-    const list = raw
-      .filter((i) => i.type === 'GradebookColumn' && (i.end || i.start))
-      .filter((i) => !seen.has(i.id) && seen.add(i.id))
-      .map((i) => {
-        const c = parseCourse(i.calendarName);
-        return {
-          id: i.id, courseId: i.calendarId, code: c.code, course: c.name, title: i.title,
-          due: i.end || i.start, color: i.color || '#999999', submitted: null,
-          url: `${ORIGIN}/ultra/courses/${i.calendarId}/outline`,
-        };
-      });
-    // Have you already handed it in? (Blackboard's own attempt records)
-    await pool(list, 4, async (it) => {
-      try {
-        const a = await api(`/learn/api/public/v2/courses/${it.courseId}/gradebook/columns/${it.id}/attempts?fields=id,status`);
-        const ok = ['NeedsGrading', 'Completed', 'Submitted', 'InProgressGraded'];
-        it.submitted = (a.results || []).some((x) => ok.includes(x.status));
-      } catch (e) { it.submitted = null; }
-    });
-    list.sort((a, b) => new Date(a.due) - new Date(b.due));
-    return list;
+    return { code: (code || name.split(' ').slice(0, 2).join(' ')).slice(0, 14), name };
   }
 
+  /* ================= platforms ================= */
+  const SUBMITTED = ['NeedsGrading', 'Completed', 'Submitted', 'InProgressGraded'];
+
+  const PLATFORMS = {
+    /* ---------- Blackboard Learn Ultra ---------- */
+    blackboard: {
+      name: 'Blackboard',
+      home: '/ultra/course',
+      idPrefix: 'bb',
+      looksLike: () => !!document.querySelector('.MuiDrawer-paper, #site-wrap, .base-navigation') || /^\/(ultra|webapps)\b/.test(location.pathname),
+      probe: () => getJSON(ORIGIN + '/learn/api/public/v1/users/me').then((r) => !!(r.data && r.data.userName)),
+
+      async fetch(days) {
+        const now = Date.now();
+        const since = new Date(now - 3 * DAY).toISOString();
+        const until = new Date(now + days * DAY).toISOString();
+        let path = `/learn/api/public/v1/calendars/items?since=${since}&until=${until}`;
+        const raw = [];
+        for (let page = 0; path && page < 8; page++) {
+          const { data } = await getJSON(ORIGIN + path);
+          raw.push(...(data.results || []));
+          path = data.paging && data.paging.nextPage;
+        }
+        const seen = new Set();
+        const list = raw
+          .filter((i) => i.type === 'GradebookColumn' && (i.end || i.start))
+          .filter((i) => !seen.has(i.id) && seen.add(i.id))
+          .map((i) => {
+            const c = parseCourse(i.calendarName);
+            return {
+              id: i.id, courseId: i.calendarId, code: c.code, course: c.name, title: i.title,
+              due: i.end || i.start, color: i.color || '#999999', submitted: null,
+              url: `${ORIGIN}/ultra/courses/${i.calendarId}/outline`,
+            };
+          });
+        // Have you already handed it in? (Blackboard's own attempt records)
+        await pool(list, 4, async (it) => {
+          try {
+            const { data } = await getJSON(`${ORIGIN}/learn/api/public/v2/courses/${it.courseId}/gradebook/columns/${it.id}/attempts?fields=id,status`);
+            it.submitted = (data.results || []).some((x) => SUBMITTED.includes(x.status));
+          } catch (e) { it.submitted = null; }
+        });
+        return list;
+      },
+
+      /** The school's colors, measured with Bloom's styles switched off. */
+      measure() {
+        const paper = document.querySelector('.MuiDrawer-paper');
+        if (!paper) return null;
+        const bg = (el) => getComputedStyle(el).backgroundColor;
+        const primary = bg(paper);
+        if (!primary || primary === 'rgba(0, 0, 0, 0)') return null;
+        // the highlighted menu item uses a darker shade of the school color
+        let active = '';
+        const picks = [...paper.querySelectorAll('[aria-current], .active, .Mui-selected'), ...paper.querySelectorAll('a, li, button')];
+        for (const el of picks) {
+          const c = bg(el);
+          if (c && c !== 'rgba(0, 0, 0, 0)' && c !== primary && !/255, 255, 255/.test(c)) { active = c; break; }
+        }
+        return { primary, active };
+      },
+
+      sel: {
+        sidebar: ['.MuiDrawer-paper', '.themed-logo-background-primary-fill', '.color-selection-live-mode .themed-background-primary-fill-only'],
+        sidebarText: '.MuiDrawer-paper :is(a, span, p, div, h1, h2, h3, li, button, svg)',
+        page: ['body', '#site-wrap', '.off-canvas-wrap', '#main-content', 'aside'],
+        card: ['.element-card', '.course-element-card', '.MuiCard-root'],
+        text: '#main-content :is(h1, h2, h3, h4), h1#main-heading, .page-title, .element-card :is(h2, h3, h4, .course-title)',
+        main: '#main-content',
+      },
+    },
+
+    /* ---------- Canvas LMS ---------- */
+    canvas: {
+      name: 'Canvas',
+      home: '/',
+      idPrefix: 'cv',
+      looksLike: () => !!document.querySelector('#application.ic-app, .ic-app, #header.ic-app-header, .ic-app-header'),
+      probe: () => getJSON(ORIGIN + '/api/v1/users/self').then((r) => !!(r.data && r.data.id && 'short_name' in r.data)),
+
+      async fetch(days) {
+        const now = Date.now();
+        const start = new Date(now - 3 * DAY).toISOString();
+        const end = new Date(now + days * DAY).toISOString();
+        // course codes and your course colors (best effort)
+        const courses = {};
+        try {
+          let url = `${ORIGIN}/api/v1/courses?enrollment_state=active&per_page=100`;
+          for (let p = 0; url && p < 4; p++) {
+            const r = await getJSON(url);
+            for (const c of r.data || []) courses[c.id] = { code: c.course_code || '', name: c.name || '' };
+            url = r.next;
+          }
+        } catch (e) { /* not essential */ }
+        let colors = {};
+        try { colors = (await getJSON(`${ORIGIN}/api/v1/users/self/colors`)).data.custom_colors || {}; } catch (e) { /* not essential */ }
+
+        const raw = [];
+        let url = `${ORIGIN}/api/v1/planner/items?start_date=${encodeURIComponent(start)}&end_date=${encodeURIComponent(end)}&per_page=100`;
+        for (let p = 0; url && p < 8; p++) {
+          const r = await getJSON(url);
+          raw.push(...(r.data || []));
+          url = r.next;
+        }
+        const KINDS = ['assignment', 'quiz', 'discussion_topic', 'sub_assignment', 'planner_note', 'assessment_request'];
+        const seen = new Set();
+        return raw
+          .filter((i) => KINDS.includes(i.plannable_type))
+          .map((i) => {
+            const pl = i.plannable || {};
+            const due = pl.due_at || pl.todo_date || i.plannable_date;
+            const id = `${i.plannable_type}:${i.plannable_id}`;
+            const course = courses[i.course_id] || {};
+            const parsed = parseCourse(course.name || i.context_name || '');
+            const sub = i.submissions;
+            let submitted = null;
+            if (sub && typeof sub === 'object') submitted = !!(sub.submitted || sub.excused || sub.graded);
+            if (i.planner_override && i.planner_override.marked_complete) submitted = true;
+            return {
+              id, courseId: i.course_id, code: (course.code || parsed.code || 'To do').slice(0, 14),
+              course: course.name || i.context_name || '', title: pl.title || pl.name || 'Untitled',
+              due, color: colors[`course_${i.course_id}`] || '#6B7780', submitted,
+              url: i.html_url ? new URL(i.html_url, ORIGIN).href : ORIGIN,
+            };
+          })
+          .filter((i) => i.due && !seen.has(i.id) && seen.add(i.id));
+      },
+
+      measure() {
+        const v = (name) => getComputedStyle(document.documentElement).getPropertyValue(name).trim();
+        const primary = v('--ic-brand-primary');
+        const nav = v('--ic-brand-global-nav-bgd');
+        const header = document.querySelector('.ic-app-header, #header');
+        return { primary: toRGB(primary), active: '', nav: toRGB(nav || (header ? getComputedStyle(header).backgroundColor : '')) };
+      },
+
+      sel: {
+        sidebar: ['#header.ic-app-header', '.ic-app-header', '.ic-app-header__logomark-container'],
+        page: ['body', '#application', '#wrapper', '.ic-Layout-wrapper', '.ic-Layout-contentMain', '#content-wrapper', '#right-side-wrapper', '#main'],
+        card: ['.ic-DashboardCard', '.context_module', '.ig-list .ig-row', '.PlannerApp [class*="Day-styles__root"]'],
+        text: '.ic-Dashboard-header__title, #content :is(h1, h2, h3), .ic-DashboardCard__header-title, .page-title',
+        main: '#content',
+      },
+
+      /** Canvas paints its brand with CSS variables, which makes it easy to recolor. */
+      vars(t, navText) {
+        const out = [];
+        if (t.sidebar) out.push(
+          `--ic-brand-global-nav-bgd: ${t.sidebar}`, `--ic-brand-global-nav-logo-bgd: ${t.sidebar}`,
+          `--ic-brand-global-nav-ic-icon-svg-fill: ${navText}`, `--ic-brand-global-nav-menu-item__text-color: ${navText}`,
+          `--ic-brand-global-nav-avatar-border: ${navText}`);
+        if (t.accent) out.push(
+          `--ic-brand-primary: ${t.accent}`, `--ic-brand-primary-darkened-5: ${t.accent}`, `--ic-brand-primary-darkened-10: ${t.accent}`,
+          `--ic-brand-primary-darkened-15: ${t.accent}`, `--ic-brand-primary-lightened-5: ${t.accent}`,
+          `--ic-brand-button--primary-bgd: ${t.accent}`, `--ic-brand-button--primary-bgd-darkened-5: ${t.accent}`,
+          `--ic-brand-button--primary-bgd-darkened-15: ${t.accent}`, `--ic-link-color: ${t.accent}`,
+          `--ic-link-color-darkened-10: ${t.accent}`, `--ic-link-color-lighter: ${t.accent}`,
+          `--ic-brand-global-nav-ic-icon-svg-fill--active: ${t.accent}`, `--ic-brand-global-nav-menu-item__text-color--active: ${t.accent}`);
+        return out.length ? `:root:not(#bloom-x) { ${out.map((x) => x + ' !important').join('; ')}; }` : '';
+      },
+    },
+  };
+
+  async function detectPlatform() {
+    if (settings.platform === 'blackboard' || settings.platform === 'canvas') return settings.platform;
+    if (PLATFORMS.canvas.looksLike()) return 'canvas';
+    if (PLATFORMS.blackboard.looksLike()) return 'blackboard';
+    for (const key of ['canvas', 'blackboard']) {
+      try { if (await PLATFORMS[key].probe()) return key; } catch (e) { /* not this one */ }
+    }
+    return null;
+  }
+
+  /* ---------------- deadlines ---------------- */
   async function refresh() {
-    if (loading) return items;
+    if (loading || !platform) return items;
     loading = true; lastError = ''; render();
     try {
-      items = await fetchDeadlines();
-      await store.set({ cache: { updated: Date.now(), origin: ORIGIN, items } });
+      items = await PLATFORMS[platform].fetch(settings.days);
+      items.sort((a, b) => new Date(a.due) - new Date(b.due));
+      await store.set({ cache: { updated: Date.now(), origin: ORIGIN, platform, items } });
     } catch (e) {
-      lastError = /401|403/.test(e.message) ? 'Please sign in to Blackboard.' : 'Could not load deadlines.';
+      lastError = /401|403/.test(e.message) ? `Please sign in to ${PLATFORMS[platform].name}.` : 'Could not load deadlines.';
     }
     loading = false; render();
     return items;
   }
-
-  /* ---------------- helpers ---------------- */
-  const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
-  const isDone = (it) => it.submitted === true || !!done[it.id];
 
   function urgency(it, now = Date.now()) {
     const t = new Date(it.due).getTime();
@@ -140,39 +284,49 @@
     });
   }
 
-  /* ---------------- theme ---------------- */
-  const FONTS = {
-    default: '',
-    rounded: 'ui-rounded, "SF Pro Rounded", "Hiragino Maru Gothic ProN", "Arial Rounded MT Bold", "Nunito", sans-serif',
-    clean: '"Inter", "Helvetica Neue", -apple-system, "Segoe UI", sans-serif',
-    serif: '"Iowan Old Style", "Georgia", "Noto Serif", serif',
-    mono: 'ui-monospace, "SF Mono", Menlo, monospace',
-  };
-
-  let schoolColor = '';      // e.g. "rgb(166, 46, 66)" — measured once from the sidebar
+  /* ================= theme ================= */
+  let school = null;         // { primary, active, nav } measured from the page
   const COLOR_PROPS = ['background-color', 'background', 'color', 'border-color', 'border-left-color',
-    'border-bottom-color', 'border-top-color', 'fill', 'stroke', 'outline-color'];
+    'border-bottom-color', 'border-top-color', 'border-right-color', 'fill', 'stroke', 'outline-color', 'box-shadow'];
 
-  /** Raise a selector's priority above Blackboard's without changing what it matches. */
+  function toRGB(c) {
+    if (!c) return '';
+    const probe = document.createElement('i');
+    probe.style.color = c;
+    if (!probe.style.color) return '';
+    document.documentElement.appendChild(probe);
+    const out = getComputedStyle(probe).color;
+    probe.remove();
+    return out;
+  }
+
+  /** Raise a selector's priority above the site's without changing what it matches. */
   function boost(sel) {
     const i = sel.indexOf('::');
     return i >= 0 ? sel.slice(0, i) + ':not(#bloom-x)' + sel.slice(i) : sel + ':not(#bloom-x)';
   }
+  const boostAll = (list) => (Array.isArray(list) ? list : [list]).map(boost).join(', ');
 
-  /** Blackboard paints its sidebar, active tabs and buttons with the school's color, in many rules
-   *  (some with !important). Find all of them and override each with your accent. */
-  function accentRules(accent) {
-    if (!schoolColor) return '';
-    const target = schoolColor.replace(/\s/g, '');
+  /** Sites paint their brand color in many rules (some with !important).
+   *  Find every rule using one of the measured colors and override it with yours. */
+  function recolorRules(map) {
+    const pairs = map.filter((m) => m.from && m.to).map((m) => ({ from: m.from.replace(/\s/g, ''), to: m.to }));
+    if (!pairs.length) return '';
     const out = [];
     const walk = (list) => {
       for (const r of list) {
         if (r.cssRules && !r.selectorText) { walk(r.cssRules); continue; }
         if (!r.selectorText || !r.style) continue;
-        const props = COLOR_PROPS.filter((p) => (r.style.getPropertyValue(p) || '').replace(/\s/g, '').includes(target));
-        if (!props.length) continue;
-        const sel = r.selectorText.split(',').map((x) => boost(x.trim())).join(', ');
-        out.push(`${sel} { ${props.map((p) => `${p === 'background' ? 'background-color' : p}: ${accent} !important;`).join(' ')} }`);
+        const decl = [];
+        for (const p of COLOR_PROPS) {
+          const v = (r.style.getPropertyValue(p) || '').replace(/\s/g, '');
+          if (!v) continue;
+          const hit = pairs.find((x) => v.includes(x.from));
+          if (!hit) continue;
+          if (p === 'box-shadow') continue;  // leave shadows alone, just don't break them
+          decl.push(`${p === 'background' ? 'background-color' : p}: ${hit.to} !important;`);
+        }
+        if (decl.length) out.push(`${r.selectorText.split(',').map((x) => boost(x.trim())).join(', ')} { ${decl.join(' ')} }`);
       }
     };
     for (const sheet of document.styleSheets) {
@@ -182,40 +336,91 @@
     return out.join('\n');
   }
 
-  function measureSchoolColor() {
-    const paper = document.querySelector('.MuiDrawer-paper');
-    if (!paper) return false;
-    const el = document.getElementById('bloom-theme');
-    const saved = el ? el.textContent : '';
-    if (el) el.textContent = '';
-    const c = getComputedStyle(paper).backgroundColor;
-    if (el) el.textContent = saved;
-    if (c && c !== 'rgba(0, 0, 0, 0)') { schoolColor = c; return true; }
-    return false;
+  function themeElement() {
+    let el = document.getElementById('bloom-theme');
+    if (!el) { el = document.createElement('style'); el.id = 'bloom-theme'; (document.head || document.documentElement).appendChild(el); }
+    return el;
+  }
+
+  function measure() {
+    const P = PLATFORMS[platform];
+    if (!P) return;
+    const el = themeElement();
+    const saved = el.textContent;
+    el.textContent = '';
+    const dark = document.documentElement.classList.contains('bloom-dark');
+    document.documentElement.classList.remove('bloom-dark');
+    const m = P.measure();
+    el.textContent = saved;
+    if (dark) document.documentElement.classList.add('bloom-dark');
+    if (m && m.primary) school = m;
+  }
+
+  /** Font only on text, never on icon fonts. */
+  const TEXT_EL = 'body :is(h1, h2, h3, h4, h5, h6, p, a, span, li, td, th, label, button, input, textarea, select, div, strong, em, small, b)';
+
+  function buildCSS(t) {
+    const P = PLATFORMS[platform];
+    if (!P) return '';
+    const S = P.sel;
+    const css = [bloomFontFaces(chrome.runtime.getURL, t)];
+    const navText = bloomIsLight(t.sidebar) ? '#2B2530' : '#FFFFFF';
+    const darker = t.sidebar ? `color-mix(in srgb, ${t.sidebar} 78%, #000)` : '';
+
+    // 1. brand color everywhere → your accent; the darker menu shade → a darker sidebar
+    if (school) {
+      css.push(recolorRules([
+        { from: school.active, to: darker },
+        { from: school.nav, to: t.sidebar },
+        { from: school.primary, to: t.accent },
+      ]));
+    }
+    if (P.vars) css.push(P.vars(t, navText));
+
+    // 2. the big surfaces
+    if (t.sidebar) {
+      css.push(`${boostAll(S.sidebar)} { background-color: ${t.sidebar} !important; background-image: none !important; }`);
+      if (S.sidebarText && bloomIsLight(t.sidebar)) css.push(`${boost(S.sidebarText)} { color: ${navText} !important; }`);
+    }
+    if (t.page || t.image) {
+      const base = t.page || '#FFFFFF';
+      css.push(`${boostAll(S.page)} { background-color: ${base} !important; }`);
+      if (t.image && /^data:image\/[\w+.-]+;base64,[\w+/=]+$/.test(t.image)) {
+        const veil = bloomRGBA(base, Math.max(0, Math.min(1, 1 - t.imageStrength)));
+        css.push(`body:not(#bloom-x) { background-image: linear-gradient(${veil}, ${veil}), url("${t.image}") !important;
+          background-size: cover !important; background-position: center !important; background-attachment: fixed !important; }`);
+        css.push(`${boostAll(S.page.filter((s) => s !== 'body'))} { background-color: transparent !important; }`);
+      }
+    }
+    if (t.card) css.push(`${boostAll(S.card)} { background-color: ${t.card} !important; }`);
+    if (+t.radius > 0) css.push(`${boostAll(S.card)} { border-radius: ${+t.radius}px !important; overflow: hidden; }`);
+    if (t.text) css.push(`${boost(S.text)} { color: ${t.text} !important; }`);
+
+    // 3. type
+    const font = bloomFontStack(t);
+    if (font) css.push(`${TEXT_EL}:not([class*="icon"]):not([class*="Icon"]):not(#bloom-x) { font-family: ${font} !important; }`);
+    if (+t.size && +t.size !== 100) css.push(`${boost(S.main)} { zoom: ${+t.size / 100}; }`);
+
+    // 4. dark mode (flip the page, keep pictures natural)
+    css.push(`html.bloom-dark { filter: invert(.92) hue-rotate(180deg); background: #111 !important; }
+      html.bloom-dark img, html.bloom-dark video, html.bloom-dark iframe, html.bloom-dark canvas,
+      html.bloom-dark picture, html.bloom-dark svg image, html.bloom-dark [style*="background-image"],
+      html.bloom-dark .MuiAvatar-root, html.bloom-dark #bloom-root { filter: invert(1) hue-rotate(180deg); }`);
+
+    // 5. your own CSS, last
+    if (t.css) css.push(String(t.css).replace(/<\/style/gi, ''));
+    return css.filter(Boolean).join('\n');
   }
 
   function applyTheme() {
-    let el = document.getElementById('bloom-theme');
-    if (!el) { el = document.createElement('style'); el.id = 'bloom-theme'; (document.head || document.documentElement).appendChild(el); }
-    if (!settings.theme) { el.textContent = ''; document.documentElement.classList.remove('bloom-dark'); return; }
-    if (!schoolColor) measureSchoolColor();
-    const a = settings.accent, f = FONTS[settings.font];
-    el.textContent = `
-      ${accentRules(a)}
-      .MuiDrawer-paper:not(#bloom-x) { background-color: ${a} !important; }
-      .MuiDrawer-paper .active:not(#bloom-x), .MuiDrawer-paper [aria-current="page"]:not(#bloom-x),
-      .MuiDrawer-paper .Mui-selected:not(#bloom-x) { background-color: rgba(0,0,0,.16) !important; }
-      ${f ? `body, body .MuiTypography-root, body .MuiButtonBase-root, body input, body button, body textarea,
-             body h1, body h2, body h3, body h4, body p, body span, body a { font-family: ${f} !important; }` : ''}
-      html.bloom-dark { filter: invert(.92) hue-rotate(180deg); background: #111 !important; }
-      html.bloom-dark img, html.bloom-dark video, html.bloom-dark iframe, html.bloom-dark canvas,
-      html.bloom-dark picture, html.bloom-dark svg image, html.bloom-dark [style*="background-image"],
-      html.bloom-dark .MuiAvatar-root, html.bloom-dark #bloom-root { filter: invert(1) hue-rotate(180deg); }
-    `;
-    document.documentElement.classList.toggle('bloom-dark', !!settings.dark);
+    const el = themeElement();
+    if (!theme.enabled || !platform) { el.textContent = ''; document.documentElement.classList.remove('bloom-dark'); return; }
+    if (!school) measure();
+    el.textContent = buildCSS(theme);
+    document.documentElement.classList.toggle('bloom-dark', !!theme.dark);
   }
 
-  /* ---------------- floating widget (Shadow DOM keeps it separate from Blackboard's styles) ---------------- */
+  /* ---------------- floating widget (Shadow DOM keeps it separate from the site's styles) ---------------- */
   let host, root, open = false;
 
   function mountWidget() {
@@ -228,7 +433,8 @@
   }
 
   function css() {
-    const a = settings.accent, f = FONTS[settings.font] || '-apple-system, "Segoe UI", "Open Sans", sans-serif';
+    const a = theme.accent || '#FF6FAE';
+    const f = (theme.enabled && bloomFontStack(theme)) || '-apple-system, "Segoe UI", "Open Sans", sans-serif';
     const side = settings.side === 'left' ? 'left: 18px;' : 'right: 18px;';
     return `
       :host { all: initial; }
@@ -265,7 +471,7 @@
       .item:hover .tick { display: inline-block; }
       .foot { display: flex; gap: 6px; flex-wrap: wrap; padding: 10px 12px 12px; border-top: 1px solid #f0f0f0; }
       .btn { border: none; cursor: pointer; border-radius: 10px; padding: 8px 11px; font-size: 12.5px; font-weight: 700; background: #f4f4f5; color: #1c1c1e; }
-      .btn.main { background: ${a}; color: #fff; }
+      .btn.main { background: ${a}; color: ${bloomIsLight(a) ? '#1c1c1e' : '#fff'}; }
       .btn:hover { filter: brightness(.97); }
       .empty, .err { padding: 26px 16px; text-align: center; color: #8e8e93; font-size: 13.5px; line-height: 1.6; }
       .err { color: #E5484D; }
@@ -286,13 +492,14 @@
   }
 
   function render() {
-    if (!settings.widget) { if (host) host.remove(); host = null; return; }
+    if (!settings.widget || !platform) { if (host) host.remove(); host = null; return; }
     mountWidget();
     const now = Date.now();
     const list = visible();
     const pending = list.filter((it) => !isDone(it) && new Date(it.due).getTime() - now < 7 * DAY);
     const worst = pending.length ? urgency(pending[0], now) : 'done';
     const label = pending.length ? `${pending.length} due this week` : 'All caught up';
+    const lms = PLATFORMS[platform].name;
 
     let html = `<style>${css()}</style><div class="wrap">`;
     if (open) {
@@ -331,7 +538,7 @@
           <button class="btn" data-act="ics" title="Add to Apple / Google Calendar">📅 Calendar</button>
           <button class="btn main" data-act="edgetodo" title="Send to EdgeTodo">→ EdgeTodo</button>
         </div>
-        <div class="small">${note ? `<b style="color:#30A46C">${esc(note)}</b>` : 'Bloom for Blackboard · not affiliated with Blackboard'}</div>
+        <div class="small">${note ? `<b style="color:#30A46C">${esc(note)}</b>` : `Bloom · not affiliated with ${lms}`}</div>
       </div>`;
     }
     html += `<button class="pill" data-act="toggle"><span class="flower">✿</span>${esc(label)}
@@ -353,9 +560,13 @@
       if (done[id]) delete done[id]; else done[id] = Date.now();
       await store.set({ done }); render();
     }
-    if (act === 'hide') { settings.hideSubmitted = t.checked; await store.set({ settings }); render(); }
+    if (act === 'hide') {
+      settings.hideSubmitted = t.checked;
+      const saved = (await store.get('settings')).settings || {};
+      await store.set({ settings: { ...saved, hideSubmitted: t.checked } }); render();
+    }
     if (act === 'ics') {
-      download('blackboard-deadlines.ics', toICS(items.filter((i) => !isDone(i))), 'text/calendar');
+      download('deadlines.ics', toICS(items.filter((i) => !isDone(i))), 'text/calendar');
       flashNote('Saved — open the downloaded file to add it to your calendar.');
     }
     if (act === 'edgetodo') {
@@ -383,10 +594,11 @@
   function icsText(s) { return String(s).replace(/\\/g, '\\\\').replace(/[,;]/g, (c) => '\\' + c).replace(/\n/g, '\\n'); }
 
   function toICS(list) {
-    const lines = ['BEGIN:VCALENDAR', 'VERSION:2.0', 'PRODID:-//Bloom for Blackboard//EN', 'CALSCALE:GREGORIAN', 'X-WR-CALNAME:Blackboard deadlines'];
+    const lms = PLATFORMS[platform].name;
+    const lines = ['BEGIN:VCALENDAR', 'VERSION:2.0', 'PRODID:-//Bloom//Deadlines//EN', 'CALSCALE:GREGORIAN', `X-WR-CALNAME:${lms} deadlines`];
     const stamp = icsDate(new Date().toISOString());
     for (const it of list) {
-      lines.push('BEGIN:VEVENT', `UID:${it.id}@bloom-for-blackboard`, `DTSTAMP:${stamp}`,
+      lines.push('BEGIN:VEVENT', `UID:${PLATFORMS[platform].idPrefix}-${String(it.id).replace(/[^\w.-]/g, '-')}@bloom`, `DTSTAMP:${stamp}`,
         `DTSTART:${icsDate(it.due)}`, `DTEND:${icsDate(it.due)}`,
         `SUMMARY:${icsText(`[${it.code}] ${it.title}`)}`, `DESCRIPTION:${icsText(it.course)}`, `URL:${it.url}`,
         'BEGIN:VALARM', 'ACTION:DISPLAY', `DESCRIPTION:${icsText(it.title)}`, 'TRIGGER:-P1D', 'END:VALARM',
@@ -400,19 +612,26 @@
   function toEdgeTodo(list) {
     const pad = (n) => String(n).padStart(2, '0');
     const local = (iso) => { const d = new Date(iso); return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`; };
+    const prefix = PLATFORMS[platform].idPrefix;
     return JSON.stringify({
-      todos: list.map((it) => ({ id: `bb:${it.id}`, title: it.title, category: it.code.toLowerCase(), due: local(it.due), status: 'todo' })),
+      todos: list.map((it) => ({ id: `${prefix}:${it.id}`, title: it.title, category: it.code.toLowerCase(), due: local(it.due), status: 'todo' })),
     }, null, 2);
   }
 
   /* ---------------- messages from the toolbar popup ---------------- */
   chrome.runtime.onMessage.addListener((msg, _sender, reply) => {
-    if (msg && msg.type === 'bloom:refresh') { refresh().then((list) => reply({ ok: !lastError, items: list, error: lastError })); return true; }
+    if (msg && msg.type === 'bloom:refresh') { refresh().then((list) => reply({ ok: !lastError && !!platform, items: list, error: lastError })); return true; }
     if (msg && msg.type === 'bloom:open') { open = true; render(); refresh(); reply({ ok: true }); }
   });
 
   chrome.storage.onChanged.addListener((changes) => {
-    if (changes.settings) { settings = { ...DEFAULTS, ...changes.settings.newValue }; applyTheme(); render(); }
+    if (changes.settings) {
+      const before = settings.platform;
+      settings = { ...DEFAULTS, ...changes.settings.newValue };
+      if (settings.platform !== before) start();
+      else render();
+    }
+    if (changes.theme) { theme = { ...BLOOM_THEME_DEFAULTS, ...changes.theme.newValue }; applyTheme(); render(); }
     if (changes.done) { done = changes.done.newValue || {}; render(); }
   });
 
@@ -420,28 +639,39 @@
   function watchForStyles() {
     const obs = new MutationObserver((muts) => {
       const relevant = muts.some((m) => [...m.addedNodes].some((n) =>
-        n.nodeType === 1 && (n.tagName === 'STYLE' || n.tagName === 'LINK' || (n.querySelector && n.querySelector('.MuiDrawer-paper')))));
+        n.nodeType === 1 && n.id !== 'bloom-root' && (n.tagName === 'STYLE' || n.tagName === 'LINK' ||
+          (n.querySelector && n.querySelector('.MuiDrawer-paper, .ic-app-header, .element-card, .ic-DashboardCard')))));
       if (!relevant) return;
       clearTimeout(themeTimer);
-      themeTimer = setTimeout(() => { if (settings.theme) applyTheme(); }, 400);
+      themeTimer = setTimeout(() => { if (theme.enabled) { if (!school) measure(); applyTheme(); } }, 400);
     });
     obs.observe(document.documentElement, { childList: true, subtree: true });
   }
 
   /* ---------------- start ---------------- */
-  (async () => {
-    const saved = await store.get(['settings', 'cache', 'done']);
-    settings = { ...DEFAULTS, ...(saved.settings || {}) };
-    done = saved.done || {};
-    if (saved.cache && saved.cache.origin === ORIGIN) items = saved.cache.items || [];
+  let timersOn = false;
+  async function start() {
+    platform = await detectPlatform();
+    school = null;
     applyTheme();
-    watchForStyles();
     render();
-    // Blackboard keeps you on one page while you click around; refresh now and every 15 minutes.
-    if (!location.pathname.startsWith('/learn/api')) {
-      refresh();
+    if (!platform || /^\/(learn\/)?api\//.test(location.pathname)) return;
+    refresh();
+    if (!timersOn) {
+      timersOn = true;
+      // The site keeps you on one page while you click around; refresh every 15 minutes.
       setInterval(() => { if (!document.hidden) refresh(); }, 15 * 60 * 1000);
       setInterval(render, 60 * 1000);   // keep countdowns current
     }
+  }
+
+  (async () => {
+    const saved = await store.get(['settings', 'theme', 'cache', 'done']);
+    settings = { ...DEFAULTS, ...(saved.settings || {}) };
+    theme = bloomTheme(saved);
+    done = saved.done || {};
+    if (saved.cache && saved.cache.origin === ORIGIN) items = saved.cache.items || [];
+    watchForStyles();
+    await start();
   })();
 })();

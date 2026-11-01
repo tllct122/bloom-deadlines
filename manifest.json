@@ -1,16 +1,47 @@
 {
   "manifest_version": 3,
-  "name": "Bloom for Blackboard",
-  "version": "1.0.0",
-  "description": "Every Blackboard deadline at a glance — with submitted status — plus your own colors for Blackboard.",
-  "permissions": ["storage", "scripting", "alarms"],
-  "optional_host_permissions": ["https://*/*"],
-  "background": { "service_worker": "background.js" },
-  "action": {
-    "default_title": "Bloom for Blackboard",
-    "default_popup": "popup.html",
-    "default_icon": { "16": "icons/icon-16.png", "32": "icons/icon-32.png", "48": "icons/icon-48.png" }
+  "name": "Bloom — deadlines & themes for Blackboard and Canvas",
+  "version": "1.1.0",
+  "description": "Every Blackboard and Canvas deadline at a glance, with submitted status, plus your own theme: colors, fonts, background and more.",
+  "permissions": [
+    "storage",
+    "scripting",
+    "alarms"
+  ],
+  "optional_host_permissions": [
+    "https://*/*"
+  ],
+  "background": {
+    "service_worker": "background.js"
   },
-  "options_ui": { "page": "options.html", "open_in_tab": true },
-  "icons": { "16": "icons/icon-16.png", "32": "icons/icon-32.png", "48": "icons/icon-48.png", "128": "icons/icon-128.png" }
+  "action": {
+    "default_title": "Bloom",
+    "default_popup": "popup.html",
+    "default_icon": {
+      "16": "icons/icon-16.png",
+      "32": "icons/icon-32.png",
+      "48": "icons/icon-48.png"
+    }
+  },
+  "options_ui": {
+    "page": "options.html",
+    "open_in_tab": true
+  },
+  "icons": {
+    "16": "icons/icon-16.png",
+    "32": "icons/icon-32.png",
+    "48": "icons/icon-48.png",
+    "128": "icons/icon-128.png"
+  },
+  "short_name": "Bloom",
+  "web_accessible_resources": [
+    {
+      "resources": [
+        "fonts/*.woff2"
+      ],
+      "matches": [
+        "https://*/*"
+      ]
+    }
+  ]
 }

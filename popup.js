@@ -1,8 +1,10 @@
+/* global bloomTheme */
 const DAY = 86400000;
 const COLORS = { overdue: '#E5484D', today: '#F76B15', soon: '#E2A400', later: '#8E8E93', done: '#30A46C' };
 const $ = (s) => document.querySelector(s);
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
-let settings = {}, cache = null, done = {};
+let settings = {}, cache = null, done = {}, theme = {};
+const lmsName = () => (cache && cache.platform === 'canvas' ? 'Canvas' : cache && cache.platform === 'blackboard' ? 'Blackboard' : 'your school site');
 
 const isDone = (it) => it.submitted === true || !!done[it.id];
 function urgency(it, now) {
@@ -30,11 +32,11 @@ function ago(ts) {
 }
 
 function render() {
-  const accent = settings.accent || '#FF6FAE';
+  const accent = theme.accent || '#FF6FAE';
   document.documentElement.style.setProperty('--accent', accent);
   const list = $('#list');
   if (!settings.host) {
-    list.innerHTML = `<div class="pempty">Connect your Blackboard to see your deadlines here.<br><br>
+    list.innerHTML = `<div class="pempty">Connect your Blackboard or Canvas to see your deadlines here.<br><br>
       <button class="btn main" id="setup">Set up Bloom</button></div>`;
     $('#setup').onclick = () => chrome.runtime.openOptionsPage();
     $('#open').hidden = true; $('#refresh').hidden = true;
@@ -45,7 +47,7 @@ function render() {
     .filter((it) => { const t = new Date(it.due).getTime(); return t > now - 2 * DAY && !(t < now && isDone(it)); })
     .filter((it) => !(settings.hideSubmitted && isDone(it)));
   if (!cache) {
-    list.innerHTML = `<div class="pempty">Open Blackboard once so Bloom can load your deadlines.</div>`;
+    list.innerHTML = `<div class="pempty">Open ${lmsName()} once so Bloom can load your deadlines.</div>`;
   } else if (!items.length) {
     list.innerHTML = `<div class="pempty">Nothing due soon — all caught up ✿</div>`;
   } else {
@@ -64,16 +66,17 @@ function render() {
     }).join('');
   }
   $('#updated').textContent = cache ? `Updated ${ago(cache.updated)}` : '';
+  $('#open').textContent = `Open ${cache && cache.platform ? lmsName() : 'site'}`;
 }
 
 async function load() {
-  const s = await chrome.storage.local.get(['settings', 'cache', 'done']);
-  settings = s.settings || {}; cache = s.cache || null; done = s.done || {};
+  const s = await chrome.storage.local.get(['settings', 'theme', 'cache', 'done']);
+  settings = s.settings || {}; theme = bloomTheme(s); cache = s.cache || null; done = s.done || {};
   render();
 }
 
 $('#settings').onclick = () => chrome.runtime.openOptionsPage();
-$('#open').onclick = () => chrome.tabs.create({ url: settings.host + '/ultra/course' });
+$('#open').onclick = () => chrome.tabs.create({ url: settings.host + (cache && cache.platform === 'blackboard' ? '/ultra/course' : '/') });
 $('#refresh').onclick = async () => {
   $('#refresh').textContent = '…';
   const tabs = settings.host ? await chrome.tabs.query({ url: settings.host + '/*' }) : [];
@@ -83,7 +86,7 @@ $('#refresh').onclick = async () => {
   }
   $('#refresh').textContent = '↻';
   if (ok) await load();
-  else $('#updated').textContent = 'Open Blackboard to refresh';
+  else $('#updated').textContent = `Open ${lmsName()} to refresh`;
 };
 
 chrome.storage.onChanged.addListener(load);
